@@ -187,7 +187,7 @@ func (impl SSOLoginServiceImpl) updateArgocdConfigMapForDexConfig(request *bean.
 	retryCount := 0
 	for !updateSuccess && retryCount < 3 {
 		retryCount = retryCount + 1
-		cm, err := impl.K8sUtil.GetConfigMap(argo.DEVTRONCD_NAMESPACE, argo.ARGOCD_CM, k8sClient)
+		cm, err := impl.K8sUtil.GetConfigMap(argo.DEVTRONCD_NAMESPACE, argo.DEVTRON_CM, k8sClient)
 		if err != nil {
 			impl.logger.Errorw("exception in fetching configmap", "error", err)
 			return flag, err
