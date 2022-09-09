@@ -35,7 +35,6 @@ type SSOLoginService interface {
 	GetById(id int32) (*bean.SSOLoginDto, error)
 	GetAll() ([]*bean.SSOLoginDto, error)
 	GetByName(name string) (*bean.SSOLoginDto, error)
-	MigrateDexConfigFromAcdDevtron() bool
 }
 
 type SSOLoginServiceImpl struct {
@@ -54,9 +53,6 @@ func NewSSOLoginServiceImpl(
 		ssoLoginRepository: ssoLoginRepository,
 		K8sUtil:            K8sUtil,
 	}
-
-	//can migrate dex data from argocd to devtron config
-	serviceImpl.MigrateDexConfigFromAcdDevtron()
 	return serviceImpl
 }
 
@@ -191,7 +187,7 @@ func (impl SSOLoginServiceImpl) updateArgocdConfigMapForDexConfig(request *bean.
 	retryCount := 0
 	for !updateSuccess && retryCount < 3 {
 		retryCount = retryCount + 1
-		cm, err := impl.K8sUtil.GetConfigMap(argo.DEVTRONCD_NAMESPACE, argo.DEVTRON_CM, k8sClient)
+		secret, err := impl.K8sUtil.GetSecret(argo.DEVTRONCD_NAMESPACE, argo.DEVTRON_SECRET, k8sClient)
 		if err != nil {
 			impl.logger.Errorw("exception in fetching configmap", "error", err)
 			return flag, err
@@ -201,14 +197,14 @@ func (impl SSOLoginServiceImpl) updateArgocdConfigMapForDexConfig(request *bean.
 			impl.logger.Errorw("exception in update configmap sso config", "error", err)
 			return flag, err
 		}
-		data := cm.Data
-		if cm.Data == nil {
-			data = make(map[string]string)
+		data := secret.Data
+		if secret.Data == nil {
+			data = make(map[string][]byte)
 		}
-		data["dex.config"] = updatedData["dex.config"]
-		data["url"] = request.Url
-		cm.Data = data
-		_, err = impl.K8sUtil.UpdateConfigMap(argo.DEVTRONCD_NAMESPACE, cm, k8sClient)
+		data["dex.config"] = []byte(updatedData["dex.config"])
+		data["url"] = []byte(request.Url)
+		secret.Data = data
+		_, err = impl.K8sUtil.UpdateSecret(argo.DEVTRONCD_NAMESPACE, secret, k8sClient)
 		if err != nil {
 			impl.logger.Warnw("config map update failed for sso config", "err", err)
 			continue
@@ -328,120 +324,4 @@ func (impl SSOLoginServiceImpl) GetByName(name string) (*bean.SSOLoginDto, error
 		Url:    model.Url,
 	}
 	return ssoLoginDto, nil
-}
-
-func (impl SSOLoginServiceImpl) MigrateDexConfigFromAcdDevtron() bool {
-	_, err := impl.migrateCMDexConfig()
-	if err != nil {
-		impl.logger.Errorw("error on migrating dex config from argocd cm to devtron cm", "err", err)
-		return false
-	}
-	_, err = impl.migrateSecretDexConfig()
-	if err != nil {
-		impl.logger.Errorw("error on migrating dex config from argocd secret to devtron secret", "err", err)
-		return false
-	}
-	return true
-}
-func (impl SSOLoginServiceImpl) migrateCMDexConfig() (bool, error) {
-	flag := false
-	k8sClient, err := impl.K8sUtil.GetClientForInCluster()
-	if err != nil {
-		impl.logger.Errorw("exception in fetching client", "error", err)
-		return flag, err
-	}
-	updateSuccess := false
-	retryCount := 0
-	for !updateSuccess && retryCount < 3 {
-		retryCount = retryCount + 1
-		acdConfigMap, err := impl.K8sUtil.GetConfigMap(argo.DEVTRONCD_NAMESPACE, argo.ARGOCD_CM, k8sClient)
-		if err != nil {
-			impl.logger.Errorw("exception in fetching configmap", "error", err)
-			return flag, err
-		}
-		devtronConfigMap, err := impl.K8sUtil.GetConfigMap(argo.DEVTRONCD_NAMESPACE, argo.DEVTRON_CM, k8sClient)
-		if err != nil {
-			impl.logger.Errorw("exception in fetching configmap", "error", err)
-			return flag, err
-		}
-
-		if acdConfigMap.Data == nil {
-			data := make(map[string]string)
-			acdConfigMap.Data = data
-		}
-		if devtronConfigMap.Data == nil {
-			data := make(map[string]string)
-			acdConfigMap.Data = data
-		}
-		if _, ok := devtronConfigMap.Data["dex.config"]; ok {
-			devtronConfigMap.Data["dex.config"] = acdConfigMap.Data["dex.config"]
-		}
-		if _, ok := devtronConfigMap.Data["url"]; ok {
-			devtronConfigMap.Data["url"] = acdConfigMap.Data["url"]
-		}
-		_, err = impl.K8sUtil.UpdateConfigMap(argo.DEVTRONCD_NAMESPACE, devtronConfigMap, k8sClient)
-		if err != nil {
-			impl.logger.Errorw("config map update failed for sso config", "err", err)
-			continue
-		}
-		updateSuccess = true
-	}
-	if !updateSuccess {
-		return false, fmt.Errorf("unable to update configmap")
-	}
-	return true, nil
-}
-func (impl SSOLoginServiceImpl) migrateSecretDexConfig() (bool, error) {
-	flag := false
-	k8sClient, err := impl.K8sUtil.GetClientForInCluster()
-	if err != nil {
-		impl.logger.Errorw("exception in fetching client", "error", err)
-		return flag, err
-	}
-	updateSuccess := false
-	retryCount := 0
-	for !updateSuccess && retryCount < 3 {
-		retryCount = retryCount + 1
-		acdSecret, err := impl.K8sUtil.GetConfigMap(argo.DEVTRONCD_NAMESPACE, argo.ARGOCD_SECRET, k8sClient)
-		if err != nil {
-			impl.logger.Errorw("exception in fetching configmap", "error", err)
-			return flag, err
-		}
-		devtronSecret, err := impl.K8sUtil.GetConfigMap(argo.DEVTRONCD_NAMESPACE, argo.DEVTRON_SECRET, k8sClient)
-		if err != nil {
-			impl.logger.Errorw("exception in fetching configmap", "error", err)
-			return flag, err
-		}
-
-		if acdSecret.Data == nil {
-			data := make(map[string]string)
-			acdSecret.Data = data
-		}
-		if devtronSecret.Data == nil {
-			data := make(map[string]string)
-			devtronSecret.Data = data
-		}
-		if _, ok := devtronSecret.Data["admin.password"]; ok {
-			devtronSecret.Data["admin.password"] = acdSecret.Data["admin.password"]
-		}
-		if _, ok := devtronSecret.Data["admin.passwordMtime"]; ok {
-			devtronSecret.Data["admin.passwordMtime"] = acdSecret.Data["admin.passwordMtime"]
-		}
-		if _, ok := devtronSecret.Data["server.secretkey"]; ok {
-			devtronSecret.Data["server.secretkey"] = acdSecret.Data["server.secretkey"]
-		}
-		if _, ok := devtronSecret.Data["admin.base64password"]; ok {
-			devtronSecret.Data["admin.base64password"] = devtronSecret.Data["ACD_PASSWORD"]
-		}
-		_, err = impl.K8sUtil.UpdateConfigMap(argo.DEVTRONCD_NAMESPACE, devtronSecret, k8sClient)
-		if err != nil {
-			impl.logger.Errorw("config map update failed for sso config", "err", err)
-			continue
-		}
-		updateSuccess = true
-	}
-	if !updateSuccess {
-		return false, fmt.Errorf("unable to update secret")
-	}
-	return true, nil
 }
