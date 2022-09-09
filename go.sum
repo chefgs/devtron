@@ -295,6 +295,8 @@ github.com/devtron-labs/authenticator v0.4.31-0.20220908110803-d16bbb44d6cf h1:f
 github.com/devtron-labs/authenticator v0.4.31-0.20220908110803-d16bbb44d6cf/go.mod h1:ozNfT8WcruiSgnUbyp48WVfc41++W6xYXhKFp67lNTU=
 github.com/devtron-labs/authenticator v0.4.31-0.20220908184700-92a6e25bc478 h1:DiMEHRCG47jKmxFpNPG7Qezu9kVFK7IqEqIqubG9HYQ=
 github.com/devtron-labs/authenticator v0.4.31-0.20220908184700-92a6e25bc478/go.mod h1:ozNfT8WcruiSgnUbyp48WVfc41++W6xYXhKFp67lNTU=
+github.com/devtron-labs/authenticator v0.4.31-0.20220909074359-6ea4f92ad73a h1:PJsaVshdw82P+/7ezVW3z+qm4nVlcSFbY4ZtjtVBaz0=
+github.com/devtron-labs/authenticator v0.4.31-0.20220909074359-6ea4f92ad73a/go.mod h1:ozNfT8WcruiSgnUbyp48WVfc41++W6xYXhKFp67lNTU=
 github.com/dgrijalva/jwt-go v3.2.0+incompatible/go.mod h1:E3ru+11k8xSBh+hMPgOLZmtrrCbhqsmaPHjLKYnJCaQ=
 github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f h1:lO4WD4F/rVNCu3HqELle0jiPLLBs70cWOduZpkS1E78=
 github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f/go.mod h1:cuUVRXasLTGF7a8hSLbxyZXjz+1KgoB3wDUb6vlszIc=
