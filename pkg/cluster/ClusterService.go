@@ -520,7 +520,6 @@ func (impl ClusterServiceImpl) CheckIfConfigIsValid(cluster *ClusterBean) error 
 	//using livez path as healthz path is deprecated
 	path := "/livez"
 	response, err := k8sClientSet.Discovery().RESTClient().Get().AbsPath(path).DoRaw(context.Background())
-	log.Println("received response for cluster livez status", "response", string(response), "err", err)
 	if err != nil {
 		if _, ok := err.(*url.Error); ok {
 			return fmt.Errorf("Incorrect server url : %v", err)
