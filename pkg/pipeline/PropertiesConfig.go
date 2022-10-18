@@ -163,7 +163,9 @@ func (impl PropertiesConfigServiceImpl) GetEnvironmentProperties(appId, environm
 			EnvironmentName:   env.Name,
 			Latest:            envOverride.Latest,
 			//ChartRefId:        chartRefId,
-			IsOverride: envOverride.IsOverride,
+			IsOverride:        envOverride.IsOverride,
+			IsBasicViewLocked: envOverride.IsBasicViewLocked,
+			CurrentViewEditor: envOverride.CurrentViewEditor,
 		}
 
 		if environmentPropertiesResponse.Namespace == "" {
@@ -187,6 +189,8 @@ func (impl PropertiesConfigServiceImpl) GetEnvironmentProperties(appId, environm
 		environmentProperties.Status = ecOverride.Status
 		environmentProperties.Namespace = ecOverride.Namespace
 		environmentProperties.Active = ecOverride.Active
+		environmentProperties.IsBasicViewLocked = ecOverride.IsBasicViewLocked
+		environmentProperties.CurrentViewEditor = ecOverride.CurrentViewEditor
 	}
 	environmentPropertiesResponse.ChartRefId = chartRefId
 	environmentPropertiesResponse.EnvironmentConfig = *environmentProperties
@@ -200,6 +204,10 @@ func (impl PropertiesConfigServiceImpl) GetEnvironmentProperties(appId, environm
 		globalOverride := []byte(chart.GlobalOverride)
 		environmentPropertiesResponse.GlobalConfig = globalOverride
 		environmentPropertiesResponse.GlobalChartRefId = chart.ChartRefId
+		if !environmentPropertiesResponse.IsOverride {
+			environmentPropertiesResponse.EnvironmentConfig.IsBasicViewLocked = chart.IsBasicViewLocked
+			environmentPropertiesResponse.EnvironmentConfig.CurrentViewEditor = chart.CurrentViewEditor
+		}
 	}
 
 	envLevelMetrics, err := impl.envLevelAppMetricsRepository.FindByAppIdAndEnvId(appId, environmentId)
