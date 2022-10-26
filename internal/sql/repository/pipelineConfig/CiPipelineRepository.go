@@ -51,6 +51,7 @@ type CiPipeline struct {
 type ExternalCiPipeline struct {
 	tableName   struct{} `sql:"external_ci_pipeline" pg:",discard_unknown_columns"`
 	Id          int      `sql:"id,pk"`
+	AppId       int      `sql:"app_id"`
 	Active      bool     `sql:"active,notnull"`
 	AccessToken string   `sql:"access_token,notnull"`
 	sql.AuditLog
@@ -74,6 +75,8 @@ type CiPipelineRepository interface {
 	SaveExternalCi(pipeline *ExternalCiPipeline, tx *pg.Tx) (*ExternalCiPipeline, error)
 	UpdateExternalCi(pipeline *ExternalCiPipeline, tx *pg.Tx) (*ExternalCiPipeline, int, error)
 	FindExternalCiByCiPipelineId(ciPipelineId int) (*ExternalCiPipeline, error)
+	FindExternalCiById(id int) (*ExternalCiPipeline, error)
+	FindExternalCiByAppId(appId int) ([]*ExternalCiPipeline, error)
 	FindCiScriptsByCiPipelineId(ciPipelineId int) ([]*CiPipelineScript, error)
 	SaveCiPipelineScript(ciPipelineScript *CiPipelineScript, tx *pg.Tx) error
 	UpdateCiPipelineScript(script *CiPipelineScript, tx *pg.Tx) error
@@ -177,6 +180,26 @@ func (impl CiPipelineRepositoryImpl) FindExternalCiByCiPipelineId(ciPipelineId i
 		Column("external_ci_pipeline.*", "CiPipeline").
 		Where("external_ci_pipeline.ci_pipeline_id = ?", ciPipelineId).
 		Where("external_ci_pipeline.active =? ", true).
+		Select()
+	return externalCiPipeline, err
+}
+
+func (impl CiPipelineRepositoryImpl) FindExternalCiById(id int) (*ExternalCiPipeline, error) {
+	externalCiPipeline := &ExternalCiPipeline{}
+	err := impl.dbConnection.Model(externalCiPipeline).
+		Column("external_ci_pipeline.*").
+		Where("id = ?", id).
+		Where("active =? ", true).
+		Select()
+	return externalCiPipeline, err
+}
+
+func (impl CiPipelineRepositoryImpl) FindExternalCiByAppId(appId int) ([]*ExternalCiPipeline, error) {
+	var externalCiPipeline []*ExternalCiPipeline
+	err := impl.dbConnection.Model(&externalCiPipeline).
+		Column("external_ci_pipeline.*").
+		Where("app_id = ?", appId).
+		Where("active =? ", true).
 		Select()
 	return externalCiPipeline, err
 }

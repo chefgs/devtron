@@ -101,7 +101,6 @@ type AppServiceImpl struct {
 	imageScanDeployInfoRepository       security.ImageScanDeployInfoRepository
 	imageScanHistoryRepository          security.ImageScanHistoryRepository
 	ArgoK8sClient                       argocdServer.ArgoK8sClient
-	gitOpsRepository                    repository.GitOpsConfigRepository
 	pipelineStrategyHistoryService      history2.PipelineStrategyHistoryService
 	configMapHistoryService             history2.ConfigMapHistoryService
 	deploymentTemplateHistoryService    history2.DeploymentTemplateHistoryService
@@ -152,7 +151,7 @@ func NewAppService(
 	cdWorkflowRepository pipelineConfig.CdWorkflowRepository, commonService commonService.CommonService,
 	imageScanDeployInfoRepository security.ImageScanDeployInfoRepository, imageScanHistoryRepository security.ImageScanHistoryRepository,
 	ArgoK8sClient argocdServer.ArgoK8sClient,
-	gitFactory *GitFactory, gitOpsRepository repository.GitOpsConfigRepository,
+	gitFactory *GitFactory,
 	pipelineStrategyHistoryService history2.PipelineStrategyHistoryService,
 	configMapHistoryService history2.ConfigMapHistoryService,
 	deploymentTemplateHistoryService history2.DeploymentTemplateHistoryService,
@@ -196,7 +195,6 @@ func NewAppService(
 		imageScanHistoryRepository:          imageScanHistoryRepository,
 		ArgoK8sClient:                       ArgoK8sClient,
 		gitFactory:                          gitFactory,
-		gitOpsRepository:                    gitOpsRepository,
 		pipelineStrategyHistoryService:      pipelineStrategyHistoryService,
 		configMapHistoryService:             configMapHistoryService,
 		deploymentTemplateHistoryService:    deploymentTemplateHistoryService,
@@ -216,10 +214,8 @@ func NewAppService(
 }
 
 const (
-	WorkflowAborted = "Aborted"
-	WorkflowFailed  = "Failed"
-	Success         = "SUCCESS"
-	Failure         = "FAILURE"
+	Success = "SUCCESS"
+	Failure = "FAILURE"
 )
 
 func (impl AppServiceImpl) getValuesFileForEnv(environmentId int) string {
@@ -327,7 +323,7 @@ func (impl AppServiceImpl) UpdateApplicationStatusAndCheckIsHealthy(newApp, oldA
 		impl.logger.Errorw("error in updating pipeline status timeline", "err", err)
 	}
 
-	if !IsTerminalStatus(deploymentStatus.Status) {
+	if !util2.IsTerminalStatus(deploymentStatus.Status) {
 		latestTimeline, err := impl.cdPipelineStatusTimelineRepo.FetchTimelineOfLatestWfByCdWorkflowIdAndStatus(pipelineOverride.CdWorkflowId, pipelineConfig.TIMELINE_STATUS_KUBECTL_APPLY_SYNCED)
 		if err != nil && err != pg.ErrNoRows {
 			impl.logger.Errorw("error in getting latest timeline", "err", err, "pipelineId", pipelineOverride.PipelineId)
@@ -399,18 +395,6 @@ func (impl AppServiceImpl) UpdateApplicationStatusAndCheckIsHealthy(newApp, oldA
 	return isHealthy, nil
 }
 
-func IsTerminalStatus(status string) bool {
-	switch status {
-	case
-		string(health.HealthStatusHealthy),
-		string(health.HealthStatusDegraded),
-		WorkflowAborted,
-		WorkflowFailed:
-		return true
-	}
-	return false
-}
-
 func (impl *AppServiceImpl) UpdatePipelineStatusTimelineForApplicationChanges(newApp, oldApp *v1alpha1.Application, pipelineOverride *chartConfig.PipelineOverride, statusTime time.Time) error {
 	b, _ := json.Marshal(newApp)
 	impl.logger.Infow("APP_STATUS_UPDATE_REQ", "stage", "timeline", "data", string(b))
@@ -458,10 +442,35 @@ func (impl *AppServiceImpl) UpdatePipelineStatusTimelineForApplicationChanges(ne
 			timeline.Status = pipelineConfig.TIMELINE_STATUS_KUBECTL_APPLY_SYNCED
 			timeline.StatusDetail = "Kubectl apply synced successfully."
 			//checking and saving if this timeline is present or not because kubewatch may stream same objects multiple times
-			_, err = impl.SavePipelineStatusTimelineIfNotAlreadyPresent(pipelineOverride.CdWorkflowId, timeline.Status, timeline)
+			currrentTimeline, err := impl.SavePipelineStatusTimelineIfNotAlreadyPresent(pipelineOverride.CdWorkflowId, timeline.Status, timeline)
 			if err != nil {
 				impl.logger.Errorw("error in saving pipeline status timeline", "err", err)
 				return err
+			}
+			impl.logger.Infow("APP_STATUS_UPDATE_REQ", "stage", "APPLY_SYNCED", "data", string(b), "status", timeline.Status)
+
+			if currrentTimeline.StatusTime.Before(newApp.Status.ReconciledAt.Time) {
+				haveNewTimeline := false
+				timeline.Id = 0
+				if newApp.Status.Health.Status == health.HealthStatusHealthy {
+					impl.logger.Infow("updating pipeline status timeline for healthy app", "newApp", newApp, "APP_TO_UPDATE", newApp.Name)
+					haveNewTimeline = true
+					timeline.Status = pipelineConfig.TIMELINE_STATUS_APP_HEALTHY
+					timeline.StatusDetail = "App status is Healthy."
+				} else if newApp.Status.Health.Status == health.HealthStatusDegraded {
+					haveNewTimeline = true
+					timeline.Status = pipelineConfig.TIMELINE_STATUS_APP_DEGRADED
+					timeline.StatusDetail = "App status is Degraded."
+				}
+				if haveNewTimeline {
+					//not checking if this status is already present or not because already checked for terminal status existence earlier
+					err = impl.cdPipelineStatusTimelineRepo.SaveTimeline(timeline)
+					if err != nil {
+						impl.logger.Errorw("error in creating timeline status", "err", err, "timeline", timeline)
+						return err
+					}
+					impl.logger.Infow("APP_STATUS_UPDATE_REQ", "stage", "terminal_status", "data", string(b), "status", timeline.Status)
+				}
 			}
 		}
 	} else {
@@ -778,8 +787,6 @@ func (impl AppServiceImpl) TriggerRelease(overrideRequest *bean.ValuesOverrideRe
 					IsOverride:        false,
 					EnvOverrideValues: "{}",
 					Latest:            false,
-					IsBasicViewLocked: chart.IsBasicViewLocked,
-					CurrentViewEditor: chart.CurrentViewEditor,
 				}
 				err = impl.environmentConfigRepository.Save(envOverride)
 				if err != nil {
