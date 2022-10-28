@@ -261,7 +261,7 @@ func (impl AppWorkflowRepositoryImpl) FindWFCDMappingByCIPipelineIds(ciPipelineI
 
 func (impl AppWorkflowRepositoryImpl) FindWFCDMappingByCDPipelineId(cdPipelineId int) (*AppWorkflowMapping, error) {
 	appWorkflowsMapping :=&AppWorkflowMapping{}
-	err := impl.dbConnection.Model(&appWorkflowsMapping).
+	err := impl.dbConnection.Model(appWorkflowsMapping).
 		Where("component_id = ?", cdPipelineId).
 		Where("type = ?", CDPIPELINE).
 		Where("active = ?", true).
@@ -313,14 +313,14 @@ func (impl AppWorkflowRepositoryImpl) FindAllWFMappingsByAppId(appId int) ([]*Ap
 }
 
 func (impl AppWorkflowRepositoryImpl) FindWFCDMappingByExternalCiId(externalCiId int) (*AppWorkflowMapping, error) {
-	var appWorkflowsMapping AppWorkflowMapping
-	err := impl.dbConnection.Model(&appWorkflowsMapping).
+	appWorkflowsMapping :=&AppWorkflowMapping{}
+	err := impl.dbConnection.Model(appWorkflowsMapping).
 		Where("parent_id = ?", externalCiId).
 		Where("parent_type = ?", WEBHOOK).
 		Where("type = ?", CDPIPELINE).
 		Where("active = ?", true).
 		Select()
-	return &appWorkflowsMapping, err
+	return appWorkflowsMapping, err
 }
 
 func (impl AppWorkflowRepositoryImpl) DeleteAppWorkflowMappingsByCdPipelineId(pipelineId int, tx *pg.Tx) error {
