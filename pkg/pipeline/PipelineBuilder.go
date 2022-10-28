@@ -1288,11 +1288,11 @@ func (impl PipelineBuilderImpl) PatchCdPipelines(cdPipelines *bean.CDPatchReques
 
 func (impl PipelineBuilderImpl) deleteCdPipeline(pipeline *pipelineConfig.Pipeline, ctx context.Context, forceDelete bool) (err error) {
 	//getting children CD pipeline details
-	appWorkflowMapping, err := impl.appWorkflowRepository.FindWFCDMappingByParentCDPipelineId(pipeline.Id)
+	childNodes, err := impl.appWorkflowRepository.FindWFCDMappingByParentCDPipelineId(pipeline.Id)
 	if err != nil && err != pg.ErrNoRows {
 		impl.logger.Errorw("error in getting children cd details", "err", err)
 		return err
-	} else if len(appWorkflowMapping) > 0 {
+	} else if len(childNodes) > 0 {
 		impl.logger.Debugw("cannot delete cd pipeline, contains children cd")
 		return fmt.Errorf("Please delete children CD pipelines before deleting this pipeline.")
 	}
@@ -1322,7 +1322,35 @@ func (impl PipelineBuilderImpl) deleteCdPipeline(pipeline *pipelineConfig.Pipeli
 	}
 
 	//delete app workflow mapping
-	err = impl.appWorkflowRepository.DeleteAppWorkflowMappingsByCdPipelineId(pipeline.Id, tx)
+	appWorkflowMapping, err := impl.appWorkflowRepository.FindWFCDMappingByCDPipelineId(pipeline.Id)
+	if err != nil {
+		impl.logger.Errorw("error in deleting workflow mapping", "err", err)
+		return err
+	}
+	if appWorkflowMapping.ParentType == appWorkflow.WEBHOOK {
+		externalCiPipeline := &pipelineConfig.ExternalCiPipeline{
+			Id:       appWorkflowMapping.ParentId,
+			Active:   false,
+			AuditLog: sql.AuditLog{UpdatedBy: 1, UpdatedOn: time.Now()},
+		}
+		_, _, err = impl.ciPipelineRepository.UpdateExternalCi(externalCiPipeline, tx)
+		if err != nil {
+			impl.logger.Errorw("error in deleting workflow mapping", "err", err)
+			return err
+		}
+
+		webhookWorkflowMapping, err := impl.appWorkflowRepository.FindByTypeAndComponentId(appWorkflowMapping.AppWorkflowId, appWorkflowMapping.ParentId, appWorkflow.WEBHOOK)
+		if err != nil {
+			impl.logger.Errorw("error in deleting workflow mapping", "err", err)
+			return err
+		}
+		err = impl.appWorkflowRepository.DeleteAppWorkflowMapping(webhookWorkflowMapping, tx)
+		if err != nil {
+			impl.logger.Errorw("error in deleting workflow mapping", "err", err)
+			return err
+		}
+	}
+	err = impl.appWorkflowRepository.DeleteAppWorkflowMapping(appWorkflowMapping, tx)
 	if err != nil {
 		impl.logger.Errorw("error in deleting workflow mapping", "err", err)
 		return err
@@ -1462,7 +1490,7 @@ func (impl PipelineBuilderImpl) createCdPipeline(ctx context.Context, app *app2.
 			AppId:       app.Id,
 			AccessToken: "",
 			Active:      true,
-			AuditLog: sql.AuditLog{CreatedBy: userId, CreatedOn: time.Now(), UpdatedOn: time.Now(), UpdatedBy: userId},
+			AuditLog:    sql.AuditLog{CreatedBy: userId, CreatedOn: time.Now(), UpdatedOn: time.Now(), UpdatedBy: userId},
 		}
 		externalCiPipeline, err = impl.ciPipelineRepository.SaveExternalCi(externalCiPipeline, tx)
 		wf := &appWorkflow.AppWorkflow{
@@ -1799,6 +1827,10 @@ func (impl PipelineBuilderImpl) GetCdPipelinesForApp(appId int) (cdPipelines *be
 				deploymentTemplate = item.Strategy
 			}
 		}
+		appWorkflowMapping, err := impl.appWorkflowRepository.FindWFCDMappingByCDPipelineId(dbPipeline.Id)
+		if err != nil {
+			return nil, err
+		}
 		pipeline := &bean.CDPipelineConfigObject{
 			Id:                            dbPipeline.Id,
 			Name:                          dbPipeline.Name,
@@ -1815,6 +1847,8 @@ func (impl PipelineBuilderImpl) GetCdPipelinesForApp(appId int) (cdPipelines *be
 			RunPreStageInEnv:              dbPipeline.RunPreStageInEnv,
 			RunPostStageInEnv:             dbPipeline.RunPostStageInEnv,
 			DeploymentAppType:             dbPipeline.DeploymentAppType,
+			ParentPipelineType:            appWorkflowMapping.ParentType,
+			ParentPipelineId:              appWorkflowMapping.ParentId,
 		}
 		pipelines = append(pipelines, pipeline)
 	}
@@ -1884,11 +1918,8 @@ func (impl PipelineBuilderImpl) GetCdParentDetails(cdPipelineId int) (parentId i
 	if err != nil {
 		return 0, "", err
 	}
-	if len(appWorkflowMapping) != 1 || appWorkflowMapping == nil {
-		return 0, "", fmt.Errorf("improper mapping found for cd pipeline")
-	}
-	parentId = appWorkflowMapping[0].ParentId
-	if appWorkflowMapping[0].ParentType == appWorkflow.CDPIPELINE {
+	parentId = appWorkflowMapping.ParentId
+	if appWorkflowMapping.ParentType == appWorkflow.CDPIPELINE {
 		pipeline, err := impl.pipelineRepository.FindById(parentId)
 		if err != nil && err != pg.ErrNoRows {
 			impl.logger.Errorw("Error in fetching cd pipeline details", err, "pipelineId", parentId)
@@ -2388,7 +2419,10 @@ func (impl PipelineBuilderImpl) GetCdPipelineById(pipelineId int) (cdPipeline *b
 			return nil, err
 		}
 	}
-
+	appWorkflowMapping, err := impl.appWorkflowRepository.FindWFCDMappingByCDPipelineId(pipelineId)
+	if err != nil {
+		return nil, err
+	}
 	cdPipeline = &bean.CDPipelineConfigObject{
 		Id:                            dbPipeline.Id,
 		Name:                          dbPipeline.Name,
@@ -2405,6 +2439,8 @@ func (impl PipelineBuilderImpl) GetCdPipelineById(pipelineId int) (cdPipeline *b
 		RunPreStageInEnv:              dbPipeline.RunPreStageInEnv,
 		RunPostStageInEnv:             dbPipeline.RunPostStageInEnv,
 		CdArgoSetup:                   environment.Cluster.CdArgoSetup,
+		ParentPipelineId:              appWorkflowMapping.ParentId,
+		ParentPipelineType:            appWorkflowMapping.ParentType,
 	}
 
 	return cdPipeline, err
