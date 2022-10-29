@@ -21,13 +21,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	application2 "github.com/argoproj/argo-cd/v2/pkg/apiclient/application"
 	client "github.com/devtron-labs/devtron/api/helm-app"
 	app2 "github.com/devtron-labs/devtron/internal/sql/repository/app"
+	"github.com/devtron-labs/devtron/internal/sql/repository/security"
 	"github.com/devtron-labs/devtron/pkg/chart"
 	chartRepoRepository "github.com/devtron-labs/devtron/pkg/chartRepo/repository"
 	repository2 "github.com/devtron-labs/devtron/pkg/cluster/repository"
 	"github.com/devtron-labs/devtron/pkg/pipeline/history"
-	repository4 "github.com/devtron-labs/devtron/pkg/pipeline/history/repository"
+	repository3 "github.com/devtron-labs/devtron/pkg/pipeline/history/repository"
 	"github.com/devtron-labs/devtron/pkg/sql"
 	"github.com/devtron-labs/devtron/pkg/user"
 	util3 "github.com/devtron-labs/devtron/pkg/util"
@@ -37,7 +39,6 @@ import (
 	"strings"
 	"time"
 
-	application2 "github.com/argoproj/argo-cd/v2/pkg/apiclient/application"
 	"github.com/caarlos0/env"
 	bean2 "github.com/devtron-labs/devtron/api/bean"
 	"github.com/devtron-labs/devtron/client/argocdServer"
@@ -46,8 +47,8 @@ import (
 	"github.com/devtron-labs/devtron/internal/sql/repository"
 	"github.com/devtron-labs/devtron/internal/sql/repository/appWorkflow"
 	"github.com/devtron-labs/devtron/internal/sql/repository/chartConfig"
+	dockerRegistryRepository "github.com/devtron-labs/devtron/internal/sql/repository/dockerRegistry"
 	"github.com/devtron-labs/devtron/internal/sql/repository/pipelineConfig"
-	"github.com/devtron-labs/devtron/internal/sql/repository/security"
 	"github.com/devtron-labs/devtron/internal/util"
 	"github.com/devtron-labs/devtron/pkg/app"
 	"github.com/devtron-labs/devtron/pkg/attributes"
@@ -115,7 +116,7 @@ type PipelineBuilder interface {
 type PipelineBuilderImpl struct {
 	logger                           *zap.SugaredLogger
 	dbPipelineOrchestrator           DbPipelineOrchestrator
-	dockerArtifactStoreRepository    repository.DockerArtifactStoreRepository
+	dockerArtifactStoreRepository    dockerRegistryRepository.DockerArtifactStoreRepository
 	materialRepo                     pipelineConfig.MaterialRepository
 	appRepo                          app2.AppRepository
 	pipelineRepository               pipelineConfig.PipelineRepository
@@ -158,7 +159,7 @@ type PipelineBuilderImpl struct {
 
 func NewPipelineBuilderImpl(logger *zap.SugaredLogger,
 	dbPipelineOrchestrator DbPipelineOrchestrator,
-	dockerArtifactStoreRepository repository.DockerArtifactStoreRepository,
+	dockerArtifactStoreRepository dockerRegistryRepository.DockerArtifactStoreRepository,
 	materialRepo pipelineConfig.MaterialRepository,
 	pipelineGroupRepo app2.AppRepository,
 	pipelineRepository pipelineConfig.PipelineRepository,
@@ -353,7 +354,7 @@ func (impl PipelineBuilderImpl) GetMaterialsForAppId(appId int) []*bean.GitMater
 
 */
 
-func (impl PipelineBuilderImpl) getDefaultArtifactStore(id string) (store *repository.DockerArtifactStore, err error) {
+func (impl PipelineBuilderImpl) getDefaultArtifactStore(id string) (store *dockerRegistryRepository.DockerArtifactStore, err error) {
 	if id == "" {
 		impl.logger.Debugw("docker repo is empty adding default repo")
 		store, err = impl.dockerArtifactStoreRepository.FindActiveDefaultStore()
@@ -685,7 +686,7 @@ func (impl PipelineBuilderImpl) UpdateCiTemplate(updateRequest *bean.CiConfigReq
 		repo = originalCiConf.DockerRepository
 	}
 
-	if dockerArtifaceStore.RegistryType == repository.REGISTRYTYPE_ECR {
+	if dockerArtifaceStore.RegistryType == dockerRegistryRepository.REGISTRYTYPE_ECR {
 		err := impl.createEcrRepo(repo, dockerArtifaceStore.AWSRegion, dockerArtifaceStore.AWSAccessKeyId, dockerArtifaceStore.AWSSecretAccessKey)
 		if err != nil {
 			impl.logger.Errorw("ecr repo creation failed while updating ci template", "repo", repo, "err", err)
@@ -771,7 +772,7 @@ func (impl PipelineBuilderImpl) CreateCiPipeline(createRequest *bean.CiConfigReq
 		repo = impl.ecrConfig.EcrPrefix + app.AppName
 	}
 
-	if store.RegistryType == repository.REGISTRYTYPE_ECR {
+	if store.RegistryType == dockerRegistryRepository.REGISTRYTYPE_ECR {
 		err := impl.createEcrRepo(repo, store.AWSRegion, store.AWSAccessKeyId, store.AWSSecretAccessKey)
 		if err != nil {
 			impl.logger.Errorw("ecr repo creation failed while creating ci pipeline", "repo", repo, "err", err)
@@ -1288,11 +1289,11 @@ func (impl PipelineBuilderImpl) PatchCdPipelines(cdPipelines *bean.CDPatchReques
 
 func (impl PipelineBuilderImpl) deleteCdPipeline(pipeline *pipelineConfig.Pipeline, ctx context.Context, forceDelete bool) (err error) {
 	//getting children CD pipeline details
-	childNodes, err := impl.appWorkflowRepository.FindWFCDMappingByParentCDPipelineId(pipeline.Id)
+	appWorkflowMapping, err := impl.appWorkflowRepository.FindWFCDMappingByParentCDPipelineId(pipeline.Id)
 	if err != nil && err != pg.ErrNoRows {
 		impl.logger.Errorw("error in getting children cd details", "err", err)
 		return err
-	} else if len(childNodes) > 0 {
+	} else if len(appWorkflowMapping) > 0 {
 		impl.logger.Debugw("cannot delete cd pipeline, contains children cd")
 		return fmt.Errorf("Please delete children CD pipelines before deleting this pipeline.")
 	}
@@ -1322,49 +1323,21 @@ func (impl PipelineBuilderImpl) deleteCdPipeline(pipeline *pipelineConfig.Pipeli
 	}
 
 	//delete app workflow mapping
-	appWorkflowMapping, err := impl.appWorkflowRepository.FindWFCDMappingByCDPipelineId(pipeline.Id)
-	if err != nil {
-		impl.logger.Errorw("error in deleting workflow mapping", "err", err)
-		return err
-	}
-	if appWorkflowMapping.ParentType == appWorkflow.WEBHOOK {
-		externalCiPipeline := &pipelineConfig.ExternalCiPipeline{
-			Id:       appWorkflowMapping.ParentId,
-			Active:   false,
-			AuditLog: sql.AuditLog{UpdatedBy: 1, UpdatedOn: time.Now()},
-		}
-		_, _, err = impl.ciPipelineRepository.UpdateExternalCi(externalCiPipeline, tx)
-		if err != nil {
-			impl.logger.Errorw("error in deleting workflow mapping", "err", err)
-			return err
-		}
-
-		webhookWorkflowMapping, err := impl.appWorkflowRepository.FindByTypeAndComponentId(appWorkflowMapping.AppWorkflowId, appWorkflowMapping.ParentId, appWorkflow.WEBHOOK)
-		if err != nil {
-			impl.logger.Errorw("error in deleting workflow mapping", "err", err)
-			return err
-		}
-		err = impl.appWorkflowRepository.DeleteAppWorkflowMapping(webhookWorkflowMapping, tx)
-		if err != nil {
-			impl.logger.Errorw("error in deleting workflow mapping", "err", err)
-			return err
-		}
-	}
-	err = impl.appWorkflowRepository.DeleteAppWorkflowMapping(appWorkflowMapping, tx)
+	err = impl.appWorkflowRepository.DeleteAppWorkflowMappingsByCdPipelineId(pipeline.Id, tx)
 	if err != nil {
 		impl.logger.Errorw("error in deleting workflow mapping", "err", err)
 		return err
 	}
 
 	if pipeline.PreStageConfig != "" {
-		err = impl.prePostCdScriptHistoryService.CreatePrePostCdScriptHistory(pipeline, tx, repository4.PRE_CD_TYPE, false, 0, time.Time{})
+		err = impl.prePostCdScriptHistoryService.CreatePrePostCdScriptHistory(pipeline, tx, repository3.PRE_CD_TYPE, false, 0, time.Time{})
 		if err != nil {
 			impl.logger.Errorw("error in creating pre cd script entry", "err", err, "pipeline", pipeline)
 			return err
 		}
 	}
 	if pipeline.PostStageConfig != "" {
-		err = impl.prePostCdScriptHistoryService.CreatePrePostCdScriptHistory(pipeline, tx, repository4.POST_CD_TYPE, false, 0, time.Time{})
+		err = impl.prePostCdScriptHistoryService.CreatePrePostCdScriptHistory(pipeline, tx, repository3.POST_CD_TYPE, false, 0, time.Time{})
 		if err != nil {
 			impl.logger.Errorw("error in creating post cd script entry", "err", err, "pipeline", pipeline)
 			return err
